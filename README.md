@@ -130,6 +130,13 @@ redaction runs with /Rotate temporarily set to 0 (see `geometry.py`). The tests 
 - Only what is under a box is removed. Text elsewhere stays, as text. The caller must verify the
   result: extract the text of the output and OCR the rendering of it, and check that the replaced
   strings are gone. This service does not check.
+- Text is removed glyph by glyph: every glyph whose box overlaps a rectangle goes, also when only its
+  edge is inside. Word boxes from a text layer (`inspect`) span the full line height and touch the
+  lines above and below, so a box padded vertically around such a word also removes glyphs of the
+  neighbouring lines, and they leave white gaps (the black fill covers only the box). Pass text-layer
+  word boxes unpadded, or shrink them vertically a little; the removed word is gone from the layer
+  either way. Pad only boxes that come from OCR of a scan, where the pixels under the box are what is
+  blanked and the box has to cover all of the ink.
 - A box covers the visible page. Content outside the CropBox is not visible, not reported by `inspect`
   and not touched.
 - When glyphs are removed from the middle of one text string of the content stream (for example a
