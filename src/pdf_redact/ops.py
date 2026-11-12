@@ -214,10 +214,47 @@ class RedactResult:
     labels_skipped: int
 
 
+def _axis_aligned(a: pymupdf.Point, b: pymupdf.Point) -> bool:
+    return abs(a.x - b.x) < 1e-3 or abs(a.y - b.y) < 1e-3
+
+
+def _partial_art_survives(page: pymupdf.Page, rects: list[pymupdf.Rect]) -> bool:
+    """Does vector art that is only partly inside a box survive under the fill?
+
+    MuPDF removes a path only when it lies entirely inside the box (that keeps table rules). A path
+    that merely crosses the box stays in the content stream, and its part under the fill can be
+    recovered by deleting the fill. Axis-aligned lines and rectangles (borders, cell backgrounds,
+    our own black fills) are ignored: their hidden part reveals nothing. A curve, a slanted line or
+    a slanted quad (a baked ink signature, text converted to outlines) triggers a rasterization.
+    Call inside `unrotated(page)`: drawings come in the unrotated frame.
+    """
+    for drawing in page.get_drawings():
+        bbox = drawing["rect"]
+        if not any(
+            bbox.x0 <= r.x1 and bbox.x1 >= r.x0 and bbox.y0 <= r.y1 and bbox.y1 >= r.y0 for r in rects
+        ):
+            continue
+        for item in drawing["items"]:
+            kind = item[0]
+            if kind == "c":
+                return True
+            if kind == "l" and not _axis_aligned(item[1], item[2]):
+                return True
+            if kind == "qu":
+                q = item[1]
+                if not (_axis_aligned(q.ul, q.ur) and _axis_aligned(q.ur, q.lr)):
+                    return True
+    return False
+
+
 def _redact_source(
     source: Source, boxes: dict[int, list[Box]], raster: set[int], font: pymupdf.Font, font_path: str
 ) -> tuple[int, int]:
-    """Redact one input in place. Returns (boxes applied, labels skipped); `raster` is local page numbers."""
+    """Redact one input in place. Returns (boxes applied, labels skipped).
+
+    `raster` holds local page numbers and grows by the pages that need a bitmap because partly
+    covered vector art survived.
+    """
     doc = source.doc
     # Annotations and form fields first: what the owner saw rendered is what gets redacted.
     doc.bake(annots=True, widgets=True)
@@ -239,8 +276,14 @@ def _redact_source(
                 page.add_redact_annot(rect, fill=BLACK, cross_out=False)
             # images=2 blanks the pixels under the box (scans are images); graphics=1 removes a vector
             # shape only when it lies entirely inside the box, so table lines that merely touch survive.
-            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS, graphics=1, text=0)
+            page.apply_redactions(
+                images=pymupdf.PDF_REDACT_IMAGE_PIXELS,
+                graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED,
+                text=pymupdf.PDF_REDACT_TEXT_REMOVE,
+            )
             _write_labels(page, labels, font_path, WHITE, rotation)
+            if _partial_art_survives(page, rects):
+                raster.add(pno)  # after the labels, so the bitmap carries box and label
         applied += len(page_boxes)
     for pno in sorted(raster):
         _rasterize_page(doc, pno, RASTER_DPI)
@@ -287,8 +330,8 @@ def redact(sources: list[Source], spec: Spec, font_path: str) -> RedactResult:
             if source.has_ocg:
                 # Hidden layers could keep content the owner never saw; a bitmap cannot.
                 raster = set(range(source.page_count))
-            rasterized += [first + pno + 1 for pno in sorted(raster)]
             done, miss = _redact_source(source, boxes, raster, font, font_path)
+            rasterized += [first + pno + 1 for pno in sorted(raster)]
             applied += done
             skipped += miss
             out.insert_pdf(source.doc, links=False, annots=False, widgets=False)

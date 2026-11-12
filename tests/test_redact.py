@@ -224,3 +224,68 @@ def test_redacting_a_page_that_has_no_text_layer_at_all(api: Api) -> None:
     doc.new_page(width=300, height=300)
     resp = api.redact(dump(doc), spec([box(1, [0.1, 0.1, 0.5, 0.5], "[x]")]))
     assert resp.status_code == 200
+
+
+def _drawings_touching(pdf: bytes, rect: pymupdf.Rect) -> list[str]:
+    page = pymupdf.open(stream=pdf, filetype="pdf")[0]
+    found = []
+    for d in page.get_drawings():
+        b = d["rect"]
+        if b.x0 <= rect.x1 and b.x1 >= rect.x0 and b.y0 <= rect.y1 and b.y1 >= rect.y0:
+            found.append("".join(i[0] for i in d["items"]))
+    return found
+
+
+def test_ink_stroke_partly_in_a_box_rasterizes_the_page(api: Api) -> None:
+    doc = pymupdf.open()
+    page = doc.new_page(width=400, height=500)
+    page.add_ink_annot([[(150, 100), (200, 130), (266, 100)]])  # a tablet signature
+    pdf = dump(doc)
+    # baked, the stroke is slanted line art that crosses the box edge at x = 230
+    rect = [150 / 400, 80 / 500, 230 / 400, 150 / 500]
+    resp = api.redact(pdf, spec([box(1, rect)]))
+    assert resp.headers["X-Redact-Rasterized"] == "1"
+    out = pymupdf.open(stream=resp.content, filetype="pdf")
+    assert out[0].get_drawings() == []  # one bitmap, no path left to recover
+    after = api.render(resp.content, dpi=72)
+    assert all_black(after, rect)
+    # the part of the stroke outside the box (x 230..266) is still there, now as pixels
+    assert extrema(after.crop(px(after, [0.6, 0.18, 0.66, 0.27])))[0] < 200
+
+
+def test_axis_aligned_lines_crossing_a_box_do_not_rasterize(api: Api) -> None:
+    doc = pymupdf.open()
+    page = doc.new_page(width=400, height=500)
+    page.draw_line((20, 100), (380, 100), color=(1, 0, 0), width=2)  # table borders
+    page.draw_line((200, 20), (200, 480), color=(1, 0, 0), width=2)
+    page.draw_rect(pymupdf.Rect(100, 90, 300, 110), fill=(0.9, 0.9, 0.9))  # cell background
+    pdf = dump(doc)
+    resp = api.redact(pdf, spec([box(1, [0.3, 0.1, 0.7, 0.3], "[x]")]))
+    assert resp.headers["X-Redact-Rasterized"] == "none"
+    kinds = _drawings_touching(resp.content, pymupdf.Rect(0, 0, 400, 500))
+    assert kinds.count("l") >= 2  # both rules are still vectors
+
+
+def test_curve_fully_inside_a_box_is_removed_without_a_bitmap(api: Api) -> None:
+    doc = pymupdf.open()
+    page = doc.new_page(width=400, height=500)
+    page.draw_curve((160, 400), (180, 380), (200, 420), color=(1, 0, 0))
+    pdf = dump(doc)
+    assert any("c" in k for k in _drawings_touching(pdf, pymupdf.Rect(0, 0, 400, 500)))
+    resp = api.redact(pdf, spec([box(1, [0.3, 0.7, 0.6, 0.9])]))  # x 120..240, y 350..450
+    assert resp.headers["X-Redact-Rasterized"] == "none"  # MuPDF removed it, nothing to rasterize
+    assert not any("c" in k for k in _drawings_touching(resp.content, pymupdf.Rect(0, 0, 400, 500)))
+
+
+def test_text_in_a_shared_form_xobject_is_redacted_on_one_page_only(api: Api) -> None:
+    src = pymupdf.open(stream=text_pdf(), filetype="pdf")
+    doc = pymupdf.open()
+    for _ in range(2):
+        page = doc.new_page(width=400, height=500)
+        page.show_pdf_page(page.rect, src, 0)
+    pdf = dump(doc)
+    rect = pad(api.word(pdf, "Novák", page=1))
+    resp = api.redact(pdf, spec([box(1, rect)]))
+    out = pymupdf.open(stream=resp.content, filetype="pdf")
+    assert "Novák" not in out[0].get_text()
+    assert "Novák" in out[1].get_text()

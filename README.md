@@ -96,7 +96,8 @@ What it does, in this order:
    of at most `min(0.75 x box height, 11 pt)` that fits the width, down to 4 pt; below that the label is
    skipped and counted.
 4. Replaces pages with an image of the redacted page (300 dpi, same size, no text layer) when they are
-   listed in `raster_pages`, and every page of an input file that has optional content (layers):
+   listed in `raster_pages`, when partly covered curved or slanted vector art would survive under a
+   box (see Limits), and every page of an input file that has optional content (layers):
    hidden layers can keep content that no box covers.
 5. Sanitises the result: metadata and XMP, outline, embedded files and file attachments, JavaScript
    and actions, links, thumbnails, form fields, all remaining annotations, hidden text (render mode 3,
@@ -131,9 +132,17 @@ redaction runs with /Rotate temporarily set to 0 (see `geometry.py`). The tests 
   strings are gone. This service does not check.
 - A box covers the visible page. Content outside the CropBox is not visible, not reported by `inspect`
   and not touched.
-- MuPDF does not keep the advance of removed glyphs: the rest of a text line to the right of a
-  removed word moves left by roughly the width of what was removed. Nothing leaks; the page just looks
-  a little different next to the box. Rasterize the page (`raster_pages`) if the layout matters.
+- When glyphs are removed from the middle of one text string of the content stream (for example a
+  whole line written by a single `Tj`), the glyphs after the removed span in that same string move
+  left, by a few points (roughly the width of one removed glyph in our probes), because MuPDF only
+  partly compensates for the removed advance. Removing from the start of a string, or text that the
+  producer split into separate strings (per word, per segment), keeps everything in place. Nothing
+  leaks; the line just looks slightly different next to the box. Rasterize the page (`raster_pages`)
+  if the exact layout matters.
+- A vector path that crosses a box edge is not removed by MuPDF (only paths fully inside the box are).
+  If such a path is a curve, a slanted line or a slanted quad (baked ink signatures, text converted
+  to outlines), the page is rasterized automatically and listed in `X-Redact-Rasterized`; axis-aligned
+  lines and rectangles (table borders, cell backgrounds) never trigger this.
 - Pages of files with optional content are rasterized, which makes them bigger and not searchable.
 - PDFs with an owner password only (no user password) are opened and written out unencrypted; PDFs
   that need a password are rejected with 422. XFA forms and 3D/rich media are not understood.
