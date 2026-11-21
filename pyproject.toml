@@ -1,6 +1,6 @@
 [project]
 name = "pdf-redact"
-version = "0.1.0"
+version = "0.2.0"
 description = "Small HTTP service for true PDF redaction on PyMuPDF"
 readme = "README.md"
 requires-python = ">=3.12"

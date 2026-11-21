@@ -212,6 +212,7 @@ class RedactResult:
     boxes: int
     rasterized: list[int]
     labels_skipped: int
+    rotated: list[int]
 
 
 def _axis_aligned(a: pymupdf.Point, b: pymupdf.Point) -> bool:
@@ -336,9 +337,15 @@ def redact(sources: list[Source], spec: Spec, font_path: str) -> RedactResult:
             skipped += miss
             out.insert_pdf(source.doc, links=False, annots=False, widgets=False)
             source.doc.close()
+        # Last, so that the boxes, like the owner's preview, are in the frame the pages had as uploaded.
+        for number, degrees in sorted(spec.rotate.items()):
+            page = out[number - 1]
+            page.set_rotation((page.rotation + degrees) % 360)
         _sanitise(out)
         pdf = out.tobytes(garbage=4, clean=True, deflate=True)
-        return RedactResult(pdf, out.page_count, applied, sorted(set(rasterized)), skipped)
+        return RedactResult(
+            pdf, out.page_count, applied, sorted(set(rasterized)), skipped, sorted(spec.rotate)
+        )
     finally:
         out.close()
         close_all(sources)

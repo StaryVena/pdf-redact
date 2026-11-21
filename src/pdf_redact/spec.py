@@ -24,6 +24,7 @@ class Box:
 class Spec:
     boxes: list[Box] = field(default_factory=list)
     raster_pages: set[int] = field(default_factory=set)
+    rotate: dict[int, int] = field(default_factory=dict)  # global page -> clockwise degrees (90, 180, 270)
 
 
 def _is_number(value: object) -> bool:
@@ -75,4 +76,20 @@ def parse_spec(raw: str | None, total_pages: int) -> Spec:
             raise ApiError(400, "raster_pages: page out of range")
         assert isinstance(value, int)
         spec.raster_pages.add(value)
+    raw_rotate = data.get("rotate", [])
+    if not isinstance(raw_rotate, list):
+        raise ApiError(400, "spec.rotate must be a list")
+    for n, item in enumerate(raw_rotate, start=1):
+        if not isinstance(item, dict):
+            raise ApiError(400, f"rotate {n}: must be an object")
+        page, degrees = item.get("page"), item.get("degrees")
+        if not _is_page(page, total_pages):
+            raise ApiError(400, f"rotate {n}: page out of range")
+        if not isinstance(degrees, int) or isinstance(degrees, bool) or degrees % 90 != 0:
+            raise ApiError(400, f"rotate {n}: degrees must be an integer multiple of 90")
+        assert isinstance(page, int)
+        if page in spec.rotate:
+            raise ApiError(400, f"rotate {n}: page given twice")
+        if degrees % 360:
+            spec.rotate[page] = degrees % 360
     return spec

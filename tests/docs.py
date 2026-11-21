@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from collections.abc import Sequence
 from typing import Any
 
 import pymupdf
@@ -98,10 +99,16 @@ def tiff_bytes(frames: int) -> bytes:
     return buf.getvalue()
 
 
-def spec(boxes: list[dict[str, object]], raster_pages: list[int] | None = None) -> str:
+def spec(
+    boxes: list[dict[str, object]],
+    raster_pages: list[int] | None = None,
+    rotate: Sequence[object] | None = None,
+) -> str:
     data: dict[str, object] = {"boxes": boxes}
     if raster_pages is not None:
         data["raster_pages"] = raster_pages
+    if rotate is not None:
+        data["rotate"] = rotate
     return json.dumps(data)
 
 
