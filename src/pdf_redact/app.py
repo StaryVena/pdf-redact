@@ -198,6 +198,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
                     "X-Redact-Boxes": str(result.boxes),
                     "X-Redact-Rasterized": ",".join(map(str, result.rasterized)) or "none",
                     "X-Redact-Labels-Skipped": str(result.labels_skipped),
+                    "X-Redact-Rotated": ",".join(map(str, result.rotated)) or "none",
                     "X-Redact-Version": __version__,
                 },
             )

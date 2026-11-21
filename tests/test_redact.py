@@ -289,3 +289,81 @@ def test_text_in_a_shared_form_xobject_is_redacted_on_one_page_only(api: Api) ->
     out = pymupdf.open(stream=resp.content, filetype="pdf")
     assert "Novák" not in out[0].get_text()
     assert "Novák" in out[1].get_text()
+
+
+# --- rotate: a page fed in sideways is turned in the result ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("before", "degrees", "after"), [(0, 90, 90), (90, 90, 180), (270, 90, 0), (0, 270, 270), (180, 180, 0)]
+)
+def test_rotate_adds_to_the_rotation_after_the_boxes_are_applied(
+    api: Api, before: int, degrees: int, after: int
+) -> None:
+    pdf = text_pdf(before)
+    rect = pad(api.word(pdf, "Novák"))
+    resp = api.redact(pdf, spec([box(1, rect, "[Osoba 1]")], rotate=[{"page": 1, "degrees": degrees}]))
+    assert resp.status_code == 200
+    assert resp.headers["X-Redact-Rotated"] == "1"
+    page = pymupdf.open(stream=resp.content, filetype="pdf")[0]
+    assert page.rotation == after
+    text = text_of(resp.content)
+    assert "Novák" not in text
+    assert "Veřejný" in text
+    # the box was in the frame of the upload: turning the original by the same angle gives the output
+    rotated = api.render(resp.content, dpi=100)
+    original = api.render(pdf, dpi=100)
+    assert rotated.size == (original.size if degrees % 180 == 0 else original.size[::-1])
+
+
+def test_rotate_leaves_the_other_pages_alone_and_zero_is_a_no_op(api: Api) -> None:
+    doc = pymupdf.open()
+    for _ in range(3):
+        doc.new_page(width=400, height=500)
+    pdf = dump(doc)
+    resp = api.redact(
+        pdf,
+        spec(
+            [box(1, [0.1, 0.1, 0.2, 0.2])], rotate=[{"page": 2, "degrees": 90}, {"page": 3, "degrees": 360}]
+        ),
+    )
+    assert resp.status_code == 200
+    assert resp.headers["X-Redact-Rotated"] == "2"
+    out = pymupdf.open(stream=resp.content, filetype="pdf")
+    assert [p.rotation for p in out.pages()] == [0, 90, 0]
+
+
+def test_rotate_works_on_a_rasterized_page(api: Api) -> None:
+    pdf = text_pdf()
+    resp = api.redact(
+        pdf,
+        spec([box(1, pad(api.word(pdf, "Novák")))], raster_pages=[1], rotate=[{"page": 1, "degrees": 270}]),
+    )
+    assert resp.status_code == 200
+    assert resp.headers["X-Redact-Rasterized"] == "1"
+    assert pymupdf.open(stream=resp.content, filetype="pdf")[0].rotation == 270
+
+
+def test_without_rotate_the_header_says_none(api: Api) -> None:
+    resp = api.redact(text_pdf(), spec([box(1, [0.1, 0.1, 0.2, 0.2])]))
+    assert resp.headers["X-Redact-Rotated"] == "none"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"page": 2, "degrees": 90},
+        {"page": 1, "degrees": 45},
+        {"page": 1, "degrees": "90"},
+        {"page": 1},
+        "x",
+    ],
+)
+def test_rotate_rejects_bad_entries(api: Api, bad: object) -> None:
+    resp = api.redact(text_pdf(), spec([box(1, [0.1, 0.1, 0.2, 0.2])], rotate=[bad]))
+    assert resp.status_code == 400
+
+
+def test_rotate_rejects_a_page_given_twice(api: Api) -> None:
+    both = [{"page": 1, "degrees": 90}, {"page": 1, "degrees": 180}]
+    assert api.redact(text_pdf(), spec([box(1, [0.1, 0.1, 0.2, 0.2])], rotate=both)).status_code == 400

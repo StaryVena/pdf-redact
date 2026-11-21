@@ -30,7 +30,7 @@ never repeat document content.
 ### `GET /healthz`
 
 ```
-{"status":"ok","version":"0.1.0","pymupdf":"2.1"}
+{"status":"ok","version":"0.2.0","pymupdf":"2.1"}
 ```
 
 ### `GET /metrics`
@@ -79,9 +79,14 @@ curl -sD - -F file=@a.pdf \
 
 `spec` is JSON: `boxes` (at most 5000; `page` 1-based, `rect` `[x0,y0,x1,y1]` with
 `0 <= x0 < x1 <= 1` and `0 <= y0 < y1 <= 1`, `label` at most 64 characters, may be empty) and an
-optional `raster_pages` list. Response: `application/pdf` with the headers `X-Redact-Pages`,
+optional `raster_pages` list and an optional `rotate` list, `[{"page":3,"degrees":90}]`: turn the page
+clockwise by `degrees` (a multiple of 90) in the result, for a scan that was fed in sideways. The boxes
+of `boxes` stay in the frame of the page as uploaded (the frame of `render` and `preview`); the turn is
+the last step, so the output page is the redacted page turned, with `/Rotate` raised by `degrees`.
+`preview` ignores it. Response: `application/pdf` with the headers `X-Redact-Pages`,
 `X-Redact-Boxes`, `X-Redact-Rasterized` (comma-separated page numbers, or `none`),
-`X-Redact-Labels-Skipped` (labels that did not fit even at 4 pt) and `X-Redact-Version`.
+`X-Redact-Labels-Skipped` (labels that did not fit even at 4 pt), `X-Redact-Rotated`
+(comma-separated page numbers that were turned, or `none`) and `X-Redact-Version`.
 
 What it does, in this order:
 
